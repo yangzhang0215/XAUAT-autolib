@@ -1,0 +1,12 @@
+{
+  "baseUrl": "https://libspace.xauat.edu.cn",
+  "triggerTime": "07:00:00",
+  "lang": "zh",
+  "auth": {
+    "username": "2504811004",
+    "password": "Ys520@qq.com"
+  },
+  "selectionMode": "candidate_seats",
+  "candidateSeats": [],
+  "areaPreferences": []
+}

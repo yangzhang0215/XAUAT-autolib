@@ -1,0 +1,14 @@
+runtime/
+python/runtime/
+python/config.local.json
+
+Lib/
+python/.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+
+scripts/*.exe
