@@ -37,19 +37,18 @@
 
 ## 配置加载规则
 
-当前支持“模板配置 + 本地覆盖”：
+当前仓库提供示例模板，实际运行使用本地配置：
 
-- 跟踪到仓库的模板文件：[config.json](config.json)
+- 跟踪到仓库的模板文件：[config.example.json](config.example.json)
 - 本地覆盖文件：`config.local.json`
 
-如果 `config.local.json` 存在，会优先读取它。
+程序默认读取 `config.local.json`；`config.example.json` 仅作为示例模板，不会被自动加载。
 
 命令运行时的凭据优先级：
 
 1. CLI 参数
 2. `LIBSPACE_USERNAME` / `LIBSPACE_PASSWORD`
 3. `config.local.json`
-4. `config.json`
 
 ## 自动登录兜底
 

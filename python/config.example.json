@@ -3,8 +3,8 @@
   "triggerTime": "07:00:00",
   "lang": "zh",
   "auth": {
-    "username": "2504811004",
-    "password": "Ys520@qq.com"
+    "username": "your-student-id",
+    "password": "your-cas-password"
   },
   "selectionMode": "candidate_seats",
   "candidateSeats": [],

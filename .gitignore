@@ -1,6 +1,7 @@
 runtime/
 python/runtime/
 python/config.local.json
+python/config.json
 
 Lib/
 python/.venv/

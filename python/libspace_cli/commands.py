@@ -330,7 +330,7 @@ def _perform_login(ctx: CommandContext, args: Any | None = None, *, allow_manual
         return _record_login_failure(
             ctx,
             status="api_error",
-            message="No credentials available. Set python/config.json auth.username/auth.password or pass --username/--password.",
+            message="No credentials available. Set python/config.local.json auth.username/auth.password or pass --username/--password.",
             login_mode="direct",
         )
 

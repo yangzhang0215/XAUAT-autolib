@@ -19,7 +19,7 @@
 - [python/cli.py](python/cli.py)：CLI 入口
 - [python/libspace_cli](python/libspace_cli)：核心实现
 - [python/tests](python/tests)：单元测试
-- [python/config.json](python/config.json)：安全模板配置
+- [python/config.example.json](python/config.example.json)：示例配置模板
 - [docs/seat-id-table.md](docs/seat-id-table.md)：座位号与 `seatId` 对照表
 - [scripts/register-python-task.ps1](scripts/register-python-task.ps1)：Windows 计划任务注册脚本
 - [scripts/python-run-reserve-once.cmd](scripts/python-run-reserve-once.cmd)：Windows 一键运行脚本
@@ -40,11 +40,11 @@ py -3 -m pip install -r python\requirements.txt
 
 ### 1. 配置账号密码
 
-仓库里跟踪的是安全模板 [python/config.json](python/config.json)，建议你实际使用时新建 `python/config.local.json`，把真实账号密码写进去。
+仓库里跟踪的是示例模板 [python/config.example.json](python/config.example.json)，实际使用时请新建 `python/config.local.json`，把真实账号密码写进去。
 
 推荐做法：
 
-1. 复制 `python/config.json` 为 `python/config.local.json`
+1. 复制 `python/config.example.json` 为 `python/config.local.json`
 2. 在 `python/config.local.json` 里填写自己的统一身份认证账号和密码
 3. 不要把 `python/config.local.json` 提交到 GitHub
 
@@ -65,7 +65,7 @@ py -3 -m pip install -r python\requirements.txt
 }
 ```
 
-如果 `python/config.local.json` 存在，程序会优先读取它；否则才回退到 `python/config.json`。
+程序默认读取 `python/config.local.json`；仓库中的 `python/config.example.json` 仅作为示例模板，不会被自动加载。
 
 ### 2. 登录并缓存 token
 
@@ -231,7 +231,6 @@ py -3 python\cli.py interfaces --format json --output python\runtime\interfaces.
 1. CLI 参数 `--username` 和 `--password`
 2. 环境变量 `LIBSPACE_USERNAME` 和 `LIBSPACE_PASSWORD`
 3. `python/config.local.json`
-4. `python/config.json`
 
 ### 关键配置项
 

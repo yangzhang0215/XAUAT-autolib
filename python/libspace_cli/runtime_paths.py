@@ -22,7 +22,7 @@ def resolve_runtime_paths(root_dir: Path | None = None) -> RuntimePaths:
     log_dir = runtime_dir / "logs"
     return RuntimePaths(
         root_dir=root,
-        config_path=root / "config.json",
+        config_path=root / "config.local.json",
         runtime_dir=runtime_dir,
         log_dir=log_dir,
         state_path=runtime_dir / "state.json",
