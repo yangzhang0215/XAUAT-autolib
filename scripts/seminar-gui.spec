@@ -2,7 +2,12 @@
 
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import (
+    collect_all,
+    collect_data_files,
+    collect_dynamic_libs,
+    collect_submodules,
+)
 
 
 spec_dir = Path(SPECPATH).resolve()
@@ -26,6 +31,12 @@ for package_name in ("PySide6", "qfluentwidgets", "shiboken6"):
     datas += collected_datas
     binaries += collected_binaries
     hiddenimports += collected_hiddenimports
+
+    # Guard against partial hooks by explicitly collecting submodules/data/libs.
+    hiddenimports += collect_submodules(package_name)
+    datas += collect_data_files(package_name)
+    binaries += collect_dynamic_libs(package_name)
+
 
 
 a = Analysis(
