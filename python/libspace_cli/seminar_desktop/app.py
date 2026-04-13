@@ -3,12 +3,13 @@ from __future__ import annotations
 import io
 import os
 import sys
+import ctypes
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
     from PySide6.QtCore import QTimer, Qt, QUrl
-    from PySide6.QtGui import QColor, QDesktopServices, QFont, QResizeEvent
+    from PySide6.QtGui import QColor, QDesktopServices, QFont, QIcon, QResizeEvent
     from PySide6.QtWidgets import QApplication
     from qfluentwidgets import (
         FluentIcon as FIF,
@@ -24,6 +25,7 @@ with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
 
 from .controller import SeminarDesktopController
 from .views import DashboardPage, LogDrawer, LogsPage, SettingsPage
+from ..runtime_paths import resolve_data_path
 
 
 APP_QSS = """
@@ -144,6 +146,25 @@ QLabel#emptyStateLabel {
 }
 """
 
+APP_ICON_PATH = resolve_data_path("assets", "xauat-emblem.ico")
+APP_ID = "xauat.seminar.reserve.gui"
+
+
+def _load_app_icon() -> QIcon | None:
+    if not APP_ICON_PATH.exists():
+        return None
+    icon = QIcon(str(APP_ICON_PATH))
+    return None if icon.isNull() else icon
+
+
+def _apply_windows_app_id() -> None:
+    if sys.platform != "win32":
+        return
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
+    except Exception:
+        return
+
 
 class SeminarMainWindow(MSFluentWindow):
     def __init__(self) -> None:
@@ -155,8 +176,12 @@ class SeminarMainWindow(MSFluentWindow):
         self.setWindowTitle("独立研讨室预约系统")
         self.resize(1520, 980)
         self.setMinimumSize(1280, 840)
+        app_icon = _load_app_icon()
+        if app_icon is not None:
+            self.setWindowIcon(app_icon)
         try:
-            self.setWindowIcon(FIF.APPLICATION.icon())
+            if app_icon is None:
+                self.setWindowIcon(FIF.APPLICATION.icon())
         except Exception:  # pragma: no cover - icon fallback
             pass
         try:
@@ -275,11 +300,15 @@ class SeminarMainWindow(MSFluentWindow):
 
 
 def create_application() -> QApplication:
+    _apply_windows_app_id()
     app = QApplication.instance()
     if app is None:
         app = QApplication(sys.argv)
 
     app.setFont(QFont("Microsoft YaHei UI", 10))
+    app_icon = _load_app_icon()
+    if app_icon is not None:
+        app.setWindowIcon(app_icon)
     setTheme(Theme.DARK)
     setThemeColor(QColor("#0078D4"))
     app.setStyleSheet(APP_QSS)

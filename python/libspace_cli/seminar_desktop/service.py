@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable
 
-from ..runtime_paths import ensure_runtime_dirs, resolve_named_runtime_paths
+from ..runtime_paths import ensure_runtime_dirs, resolve_data_path, resolve_named_runtime_paths
 from ..seminar_service import LIBRARY_CLOSE_MINUTES, LIBRARY_CLOSE_TIME, group_seminar_rooms_by_floor, seminar_room_floor_label
 from ..seminar_standalone import (
     SEMINAR_TOOL_CONFIG_NAME,
@@ -401,7 +401,7 @@ class SeminarDesktopService:
         return read_recent_log_lines(self.paths.log_dir, limit=limit)
 
     def room_doc_path(self) -> Path:
-        return self.paths.root_dir.parent / "docs" / "seminar-room-id-table.md"
+        return resolve_data_path("docs", "seminar-room-id-table.md")
 
     def discover(self, *, log_callback: Callable[[str], None] | None = None) -> ActionResult:
         target_date = get_zoned_day_string(None, DEFAULT_TIME_ZONE)

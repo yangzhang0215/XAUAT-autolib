@@ -26,6 +26,14 @@
 py -3 -m pip install -r python\requirements.txt
 ```
 
+如果你要打包 GUI（生成 exe），可以直接跑这个脚本：
+
+```powershell
+.\scripts\build-seminar-gui.ps1
+```
+
+打包结果会在 `dist\xauat-seminar-gui` 目录里。
+
 然后直接启动 GUI：
 
 ```powershell

@@ -75,6 +75,11 @@ def _relaunch_with_gui_interpreter() -> int | None:
 
 
 def main() -> int:
+    if getattr(sys, "frozen", False):
+        from libspace_cli.seminar_gui import main as gui_main
+
+        return int(gui_main() or 0)
+
     if not _has_gui_dependencies():
         relaunched = _relaunch_with_gui_interpreter()
         if relaunched is not None:
