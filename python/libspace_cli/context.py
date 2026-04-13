@@ -27,7 +27,7 @@ def create_command_context(command_name: str) -> CommandContext:
     ensure_runtime_dirs(paths)
     config = load_config(paths.config_path)
     state = load_state(paths.state_path)
-    logger = create_logger(paths, command_name)
+    logger = create_logger(paths, command_name, time_zone=config.time_zone)
     api = LibraryApi(
         base_url=config.base_url,
         lang=config.lang,

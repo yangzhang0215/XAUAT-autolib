@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+from dataclasses import replace
+from datetime import datetime, timedelta
 import re
 import sys
 from dataclasses import dataclass
@@ -32,7 +34,15 @@ from .seminar_service import (
 )
 from .seminar_tool_config import SeminarToolConfig, load_seminar_tool_config
 from .state import load_state, save_state
-from .time_utils import ScheduleWindow, enforce_schedule_window, get_zoned_day_string, get_zoned_time_string, parse_time_string, sleep_ms
+from .time_utils import (
+    ScheduleWindow,
+    enforce_schedule_window,
+    get_zoned_day_string,
+    get_zoned_time_string,
+    parse_time_string,
+    resolve_time_zone,
+    sleep_ms,
+)
 from .tree import flatten_seminar_tree
 
 
@@ -231,7 +241,7 @@ def create_seminar_tool_context(command_name: str) -> SeminarToolContext:
     ensure_runtime_dirs(paths)
     config = load_seminar_tool_config(paths.config_path)
     state = load_state(paths.state_path)
-    logger = create_logger(paths, command_name)
+    logger = create_logger(paths, command_name, time_zone=config.time_zone)
     api = LibraryApi(
         base_url=config.base_url,
         lang=config.lang,
@@ -262,10 +272,36 @@ def _resolve_schedule(
     current = parse_time_string(get_zoned_time_string(now, time_zone))
     trigger = parse_time_string(trigger_time)
     if current > trigger + late_window_seconds:
-        return ScheduleWindow(ok=False, reason="too_late", delay_ms=0, waited=False)
+        delay_ms = _delay_until_next_trigger(trigger_time=trigger_time, time_zone=time_zone, now=now)
+        return ScheduleWindow(ok=True, reason="rollover", delay_ms=delay_ms, waited=True)
     if current < trigger:
         return ScheduleWindow(ok=True, reason=None, delay_ms=(trigger - current) * 1000, waited=True)
     return ScheduleWindow(ok=True, reason=None, delay_ms=0, waited=False)
+
+
+def _delay_until_next_trigger(*, trigger_time: str, time_zone: str, now: datetime | None) -> int:
+    tz = resolve_time_zone(time_zone)
+    current = datetime.now(tz) if now is None else (now.astimezone(tz) if now.tzinfo else now.replace(tzinfo=tz))
+    trigger_seconds = parse_time_string(trigger_time)
+    trigger_hour, remainder = divmod(trigger_seconds, 3600)
+    trigger_minute, trigger_second = divmod(remainder, 60)
+    next_day = current.date() + timedelta(days=1)
+    target = datetime(
+        next_day.year,
+        next_day.month,
+        next_day.day,
+        trigger_hour,
+        trigger_minute,
+        trigger_second,
+        tzinfo=tz,
+    )
+    return max(0, int((target - current).total_seconds() * 1000))
+
+
+def _next_day_string(*, time_zone: str, now: datetime | None) -> str:
+    tz = resolve_time_zone(time_zone)
+    current = datetime.now(tz) if now is None else (now.astimezone(tz) if now.tzinfo else now.replace(tzinfo=tz))
+    return (current.date() + timedelta(days=1)).strftime("%Y-%m-%d")
 
 
 def _resolve_defaults(ctx: SeminarToolContext, args: Any, *, allow_prompt: bool) -> SeminarDefaults:
@@ -893,6 +929,13 @@ def reserve_command(args: Any) -> int:
             ctx.logger.warn("Standalone seminar execution skipped because schedule window was missed", detail)
             print(f"Execution skipped: {schedule.reason}")
             return 1
+        if schedule.reason == "rollover":
+            next_day = _next_day_string(time_zone=ctx.config.time_zone, now=None)
+            request = replace(request, day=next_day)
+            ctx.logger.info(
+                "Standalone seminar schedule rolled over to next day",
+                {"triggerTime": request.trigger_time, "nextDay": next_day, "delayMs": schedule.delay_ms},
+            )
         if schedule.delay_ms > 0:
             ctx.logger.info("Waiting until standalone seminar trigger time", {"delayMs": schedule.delay_ms})
             sleep_ms(schedule.delay_ms)

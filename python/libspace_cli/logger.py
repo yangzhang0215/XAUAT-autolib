@@ -1,19 +1,22 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from .runtime_paths import RuntimePaths
+from .time_utils import resolve_time_zone
 
 
 class JsonLogger:
-    def __init__(self, paths: RuntimePaths, command_name: str) -> None:
+    def __init__(self, paths: RuntimePaths, command_name: str, *, time_zone: str = "Asia/Shanghai") -> None:
         self.paths = paths
         self.command_name = command_name
+        self.time_zone = time_zone
 
     def _append(self, level: str, message: str, context: dict[str, Any] | None = None) -> None:
-        timestamp = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        tz = resolve_time_zone(self.time_zone)
+        timestamp = datetime.now(tz).replace(microsecond=0).isoformat()
         entry = {
             "timestamp": timestamp,
             "command": self.command_name,
@@ -40,5 +43,5 @@ class JsonLogger:
         self._append("error", message, context)
 
 
-def create_logger(paths: RuntimePaths, command_name: str) -> JsonLogger:
-    return JsonLogger(paths, command_name)
+def create_logger(paths: RuntimePaths, command_name: str, *, time_zone: str = "Asia/Shanghai") -> JsonLogger:
+    return JsonLogger(paths, command_name, time_zone=time_zone)

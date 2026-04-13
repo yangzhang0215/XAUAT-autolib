@@ -383,8 +383,9 @@ class SeminarStandaloneTests(unittest.TestCase):
 
         self.assertTrue(early.ok)
         self.assertEqual(early.delay_ms, 3600000)
-        self.assertFalse(late.ok)
-        self.assertEqual(late.reason, "too_late")
+        self.assertTrue(late.ok)
+        self.assertEqual(late.reason, "rollover")
+        self.assertEqual(late.delay_ms, (23 * 3600 + 58 * 60) * 1000)
 
     def test_resolve_reserve_options_uses_cli_values_when_config_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
