@@ -9,31 +9,43 @@ $venvPython = Join-Path $projectRoot "python\.venv\Scripts\python.exe"
 $specPath = Join-Path $PSScriptRoot "seminar-gui.spec"
 $distPath = Join-Path $projectRoot "dist\xauat-seminar-gui"
 $iconPath = Join-Path $projectRoot "assets\xauat-emblem.ico"
+$configExamplePath = Join-Path $projectRoot "python\seminar.config.example.json"
+$portableZipPath = Join-Path $projectRoot "dist\xauat-seminar-gui-portable.zip"
 
 if ([string]::IsNullOrWhiteSpace($PythonExe)) {
     if (Test-Path $venvPython) {
         $PythonExe = $venvPython
     } else {
-        throw "没有找到 python\.venv\Scripts\python.exe，请先准备好打包环境。"
+        throw "Cannot find python\.venv\Scripts\python.exe. Please prepare the packaging environment first."
     }
 }
 
 if (-not (Test-Path $PythonExe)) {
-    throw "指定的 Python 不存在：$PythonExe"
+    throw "Specified Python does not exist: $PythonExe"
 }
 
 if (-not (Test-Path $iconPath)) {
-    throw "没有找到校徽图标：$iconPath"
+    throw "Cannot find icon file: $iconPath"
 }
 
-Write-Host "使用解释器：" $PythonExe
-Write-Host "开始打包独立研讨室 GUI ..."
+Write-Host "Using interpreter:" $PythonExe
+Write-Host "Building standalone seminar GUI..."
 
 & $PythonExe -m PyInstaller --noconfirm --clean $specPath
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
+if (Test-Path $configExamplePath) {
+    Copy-Item -Force $configExamplePath (Join-Path $distPath "seminar.config.example.json")
+}
+
+if (Test-Path $portableZipPath) {
+    Remove-Item -Force $portableZipPath
+}
+Compress-Archive -Path $distPath -DestinationPath $portableZipPath
+
 Write-Host ""
-Write-Host "打包完成。输出目录："
-Write-Host $distPath
+Write-Host "Build completed."
+Write-Host "Output directory:" $distPath
+Write-Host "Portable package:" $portableZipPath
