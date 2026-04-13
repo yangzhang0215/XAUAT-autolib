@@ -9,6 +9,7 @@ from typing import Any
 
 DEFAULT_TIME_ZONE = "Asia/Shanghai"
 TIME_RE = re.compile(r"^\d{2}:\d{2}:\d{2}$")
+SHORT_TIME_RE = re.compile(r"^\d{2}:\d{2}$")
 SELECTION_MODES = {"candidate_seats", "area_preferences"}
 LOCAL_CONFIG_NAME = "config.local.json"
 
@@ -51,6 +52,31 @@ class AreaPreference:
 
 
 @dataclass(frozen=True)
+class SeminarDefaults:
+    title: str
+    content: str
+    mobile: str
+    open: str
+
+
+@dataclass(frozen=True)
+class SeminarTarget:
+    label: str
+    area_id: Any
+    room_id: Any
+    day: str
+    start_time: str
+    end_time: str
+
+
+@dataclass(frozen=True)
+class SeminarConfig:
+    trigger_time: str
+    defaults: SeminarDefaults
+    targets: list[SeminarTarget]
+
+
+@dataclass(frozen=True)
 class Config:
     base_url: str
     trigger_time: str
@@ -60,6 +86,7 @@ class Config:
     selection_mode: str
     candidate_seats: list[CandidateSeat]
     area_preferences: list[AreaPreference]
+    seminar: SeminarConfig
 
 
 def _require(condition: bool, message: str) -> None:
@@ -127,6 +154,88 @@ def _normalize_auth(auth: Any) -> AuthConfig:
     return AuthConfig(username=username.strip(), password=password.strip())
 
 
+def _normalize_open_value(value: Any, field_name: str) -> str:
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    if isinstance(value, int):
+        if value in (0, 1):
+            return str(value)
+        raise ValueError(f"{field_name} must be 0/1 or true/false")
+
+    text = str(value or "").strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return "1"
+    if text in {"0", "false", "no", "off"}:
+        return "0"
+    raise ValueError(f"{field_name} must be 0/1 or true/false")
+
+
+def _normalize_optional_text(value: Any, field_name: str) -> str:
+    if value is None:
+        return ""
+    _require(isinstance(value, str), f"{field_name} must be a string")
+    return value.strip()
+
+
+def _normalize_seminar_defaults(raw_defaults: Any) -> SeminarDefaults:
+    if raw_defaults is None:
+        return SeminarDefaults(title="", content="", mobile="", open="1")
+
+    _require(isinstance(raw_defaults, dict), "config.seminar.defaults must be an object")
+    return SeminarDefaults(
+        title=_normalize_optional_text(raw_defaults.get("title"), "config.seminar.defaults.title"),
+        content=_normalize_optional_text(raw_defaults.get("content"), "config.seminar.defaults.content"),
+        mobile=_normalize_optional_text(raw_defaults.get("mobile"), "config.seminar.defaults.mobile"),
+        open=_normalize_open_value(raw_defaults.get("open", "1"), "config.seminar.defaults.open"),
+    )
+
+
+def _normalize_short_time(value: Any, field_name: str) -> str:
+    _require(isinstance(value, str) and SHORT_TIME_RE.match(value.strip()) is not None, f"{field_name} must be HH:MM")
+    return value.strip()
+
+
+def _normalize_seminar_target(target: Any, index: int) -> SeminarTarget:
+    _require(isinstance(target, dict), f"seminar.targets[{index}] must be an object")
+    label = target.get("label")
+    _require(isinstance(label, str) and label.strip(), f"seminar.targets[{index}].label is required")
+    _require(target.get("areaId") is not None, f"seminar.targets[{index}].areaId is required")
+    _require(target.get("roomId") is not None, f"seminar.targets[{index}].roomId is required")
+    day = target.get("day")
+    _require(isinstance(day, str) and day.strip(), f"seminar.targets[{index}].day is required")
+    return SeminarTarget(
+        label=label.strip(),
+        area_id=target["areaId"],
+        room_id=target["roomId"],
+        day=day.strip(),
+        start_time=_normalize_short_time(target.get("startTime"), f"seminar.targets[{index}].startTime"),
+        end_time=_normalize_short_time(target.get("endTime"), f"seminar.targets[{index}].endTime"),
+    )
+
+
+def _normalize_seminar(raw_seminar: Any, *, default_trigger_time: str) -> SeminarConfig:
+    if raw_seminar is None:
+        return SeminarConfig(
+            trigger_time=default_trigger_time,
+            defaults=SeminarDefaults(title="", content="", mobile="", open="1"),
+            targets=[],
+        )
+
+    _require(isinstance(raw_seminar, dict), "config.seminar must be an object")
+    trigger_time = raw_seminar.get("triggerTime", default_trigger_time)
+    _require(
+        isinstance(trigger_time, str) and TIME_RE.match(trigger_time.strip()) is not None,
+        "config.seminar.triggerTime must be HH:MM:SS",
+    )
+    targets = raw_seminar.get("targets", [])
+    _require(isinstance(targets, list), "config.seminar.targets must be an array")
+    return SeminarConfig(
+        trigger_time=trigger_time.strip(),
+        defaults=_normalize_seminar_defaults(raw_seminar.get("defaults")),
+        targets=[_normalize_seminar_target(item, index) for index, item in enumerate(targets)],
+    )
+
+
 def resolve_config_path(config_path: Path) -> Path:
     local_override = config_path.with_name(LOCAL_CONFIG_NAME)
     return local_override if local_override.exists() else config_path
@@ -153,13 +262,15 @@ def load_config(config_path: Path) -> Config:
     selection_mode = str(parsed.get("selectionMode", "candidate_seats")).strip() or "candidate_seats"
     _require(selection_mode in SELECTION_MODES, f"config.selectionMode must be one of: {', '.join(sorted(SELECTION_MODES))}")
 
+    trigger_time = parsed["triggerTime"].strip()
     return Config(
         base_url=parsed["baseUrl"].rstrip("/"),
-        trigger_time=parsed["triggerTime"],
+        trigger_time=trigger_time,
         lang=parsed["lang"],
         time_zone=DEFAULT_TIME_ZONE,
         auth=_normalize_auth(parsed.get("auth")),
         selection_mode=selection_mode,
         candidate_seats=[_normalize_candidate(item, index) for index, item in enumerate(parsed.get("candidateSeats", []))],
         area_preferences=[_normalize_area_preference(item, index) for index, item in enumerate(parsed.get("areaPreferences", []))],
+        seminar=_normalize_seminar(parsed.get("seminar"), default_trigger_time=trigger_time),
     )

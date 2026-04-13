@@ -24,6 +24,12 @@ class InterfaceCatalogTests(unittest.TestCase):
             ("POST", "/api/Seat/tree"),
             ("POST", "/api/Seat/seat"),
             ("POST", "/api/Seat/confirm"),
+            ("POST", "/api/Seminar/date"),
+            ("POST", "/api/Seminar/detail"),
+            ("POST", "/api/Seminar/group"),
+            ("POST", "/api/Seminar/seminar"),
+            ("POST", "/api/Seminar/submit"),
+            ("POST", "/api/Seminar/tree"),
             ("GET", "https://authserver.xauat.edu.cn/authserver/login"),
             ("POST", "https://authserver.xauat.edu.cn/authserver/login"),
             ("GET", "https://authserver.xauat.edu.cn/authserver/checkNeedCaptcha.htl"),
@@ -33,8 +39,10 @@ class InterfaceCatalogTests(unittest.TestCase):
     def test_markdown_render_includes_module_headers(self) -> None:
         rendered = render_catalog_markdown(build_interface_catalog())
         self.assertIn("## Login and index (20)", rendered)
+        self.assertIn("## Seminar (13)", rendered)
         self.assertIn("## CAS authserver (3)", rendered)
         self.assertIn("| /api/Seat/confirm | POST |", rendered)
+        self.assertIn("| /api/Seminar/submit | POST |", rendered)
 
 
 if __name__ == "__main__":

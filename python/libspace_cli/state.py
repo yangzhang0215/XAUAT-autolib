@@ -12,6 +12,9 @@ DEFAULT_STATE: dict[str, Any] = {
     "lastLogin": None,
     "lastReserve": None,
     "lastCancel": None,
+    "lastSeminarReserve": None,
+    "lastSeminarToolDiscover": None,
+    "lastSeminarToolReserve": None,
 }
 
 

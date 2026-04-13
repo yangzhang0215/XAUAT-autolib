@@ -80,3 +80,21 @@ class LibraryApi:
             {"seat_id": seat_id, "segment": segment_id},
             encrypt=True,
         )
+
+    def get_seminar_date(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        return self.http.post("/api/Seminar/date", payload or {})
+
+    def get_seminar_tree(self, *, date: str) -> dict[str, Any]:
+        return self.http.post("/api/Seminar/tree", {"date": date})
+
+    def get_seminar_detail(self, *, room_id: Any) -> dict[str, Any]:
+        return self.http.post("/api/Seminar/detail", {"id": room_id})
+
+    def get_seminar_schedule(self, *, room_id: Any, area_id: Any, day: str) -> dict[str, Any]:
+        return self.http.post("/api/Seminar/seminar", {"room": room_id, "area": area_id, "day": day})
+
+    def get_seminar_group(self, *, card: str) -> dict[str, Any]:
+        return self.http.post("/api/Seminar/group", {"card": card})
+
+    def submit_seminar(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self.http.post("/api/Seminar/submit", payload)

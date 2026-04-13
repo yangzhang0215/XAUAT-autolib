@@ -2,6 +2,7 @@ runtime/
 python/runtime/
 python/config.local.json
 python/config.json
+python/seminar.config.local.json
 
 Lib/
 python/.venv/

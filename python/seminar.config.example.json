@@ -1,0 +1,21 @@
+{
+  "baseUrl": "https://libspace.xauat.edu.cn",
+  "lang": "zh",
+  "auth": {
+    "username": "你的学号",
+    "password": "你的统一身份认证密码"
+  },
+  "seminar": {
+    "triggerTime": "08:00:00",
+    "startTime": "08:00",
+    "endTime": "16:15",
+    "participants": ["2504000001", "2504000002"],
+    "defaults": {
+      "title": "课程讨论",
+      "content": "结构设计课程研讨",
+      "mobile": "13800000000",
+      "open": "1"
+    },
+    "priorityRoomIds": [69, 70, 71]
+  }
+}

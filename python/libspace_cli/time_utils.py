@@ -15,7 +15,7 @@ class ScheduleWindow:
 
 
 def _zoned_now(date: datetime | None, time_zone: str) -> datetime:
-    tz = _resolve_time_zone(time_zone)
+    tz = resolve_time_zone(time_zone)
     if date is None:
         return datetime.now(tz=tz)
     if date.tzinfo is None:
@@ -23,7 +23,7 @@ def _zoned_now(date: datetime | None, time_zone: str) -> datetime:
     return date.astimezone(tz)
 
 
-def _resolve_time_zone(time_zone: str):
+def resolve_time_zone(time_zone: str):
     try:
         return ZoneInfo(time_zone)
     except ZoneInfoNotFoundError:

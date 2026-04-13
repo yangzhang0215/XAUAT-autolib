@@ -8,5 +8,24 @@
   },
   "selectionMode": "candidate_seats",
   "candidateSeats": [],
-  "areaPreferences": []
+  "areaPreferences": [],
+  "seminar": {
+    "triggerTime": "07:00:00",
+    "defaults": {
+      "title": "Seminar topic",
+      "content": "Seminar request details",
+      "mobile": "13800000000",
+      "open": "1"
+    },
+    "targets": [
+      {
+        "label": "Wednesday afternoon seminar",
+        "areaId": 12,
+        "roomId": 34,
+        "day": "2026-04-08",
+        "startTime": "14:00",
+        "endTime": "16:00"
+      }
+    ]
+  }
 }

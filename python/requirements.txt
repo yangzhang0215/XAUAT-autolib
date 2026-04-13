@@ -1,2 +1,4 @@
 requests>=2.32.0,<3.0.0
 pycryptodome>=3.20.0,<4.0.0
+PySide6>=6.8.0,<7.0.0
+PySide6-Fluent-Widgets>=1.11.0,<2.0.0

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any
 
@@ -44,6 +45,20 @@ class LibraryHttpClient:
         normalized = path if path.startswith("/") else f"/{path}"
         return f"{self.base_url}{normalized}"
 
+    def _repair_mojibake(self, value: Any) -> Any:
+        if isinstance(value, dict):
+            return {key: self._repair_mojibake(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [self._repair_mojibake(item) for item in value]
+        if not isinstance(value, str) or not value:
+            return value
+
+        try:
+            repaired = value.encode("gbk").decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            return value
+        return repaired or value
+
     def post(
         self,
         path: str,
@@ -73,13 +88,18 @@ class LibraryHttpClient:
             body["authorization"] = headers["authorization"]
 
         response = self.session.post(url, json=body, headers=headers, timeout=self.timeout)
+        response.encoding = "utf-8"
         try:
-            parsed = response.json()
-        except ValueError as exc:
-            raise HttpError(
-                f"Invalid JSON response from {path}",
-                context={"path": path, "status": response.status_code},
-            ) from exc
+            parsed = json.loads(response.content.decode("utf-8"))
+        except (AttributeError, UnicodeDecodeError, json.JSONDecodeError):
+            try:
+                parsed = response.json()
+            except ValueError as exc:
+                raise HttpError(
+                    f"Invalid JSON response from {path}",
+                    context={"path": path, "status": response.status_code},
+                ) from exc
+        parsed = self._repair_mojibake(parsed)
 
         if not response.ok:
             raise HttpError(

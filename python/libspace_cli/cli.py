@@ -3,7 +3,15 @@ from __future__ import annotations
 import argparse
 import sys
 
-from .commands import cancel_seat_command, discover_command, interfaces_command, login_command, reserve_once_command
+from .commands import (
+    cancel_seat_command,
+    discover_command,
+    interfaces_command,
+    login_command,
+    reserve_once_command,
+    seminar_discover_command,
+    seminar_reserve_command,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -31,6 +39,30 @@ def build_parser() -> argparse.ArgumentParser:
     cancel_parser = subparsers.add_parser("cancel-seat", help="Cancel one active seat reservation for the current account")
     cancel_parser.add_argument("--id", help="Reservation id to cancel when multiple active bookings exist")
     cancel_parser.set_defaults(handler=cancel_seat_command)
+
+    seminar_discover_parser = subparsers.add_parser(
+        "seminar-discover",
+        help="Export seminar-room candidates and availability details",
+    )
+    seminar_discover_parser.add_argument("--date", help="Target date in YYYY-MM-DD")
+    seminar_discover_parser.set_defaults(handler=seminar_discover_command)
+
+    seminar_reserve_parser = subparsers.add_parser(
+        "seminar-reserve",
+        help="Attempt one seminar-room reservation",
+    )
+    seminar_reserve_parser.add_argument("--participant", action="append", default=[], help="One additional participant card number")
+    seminar_reserve_parser.add_argument("--room-id", help="Explicit room id")
+    seminar_reserve_parser.add_argument("--area-id", help="Explicit area id")
+    seminar_reserve_parser.add_argument("--date", help="Explicit target date in YYYY-MM-DD")
+    seminar_reserve_parser.add_argument("--start", help="Explicit start time in HH:MM")
+    seminar_reserve_parser.add_argument("--end", help="Explicit end time in HH:MM")
+    seminar_reserve_parser.add_argument("--title", help="Seminar request title")
+    seminar_reserve_parser.add_argument("--content", help="Seminar request content")
+    seminar_reserve_parser.add_argument("--mobile", help="Seminar request mobile number")
+    seminar_reserve_parser.add_argument("--open", choices=("0", "1"), help="Whether the reservation is public")
+    seminar_reserve_parser.add_argument("--force", action="store_true", help="Skip the trigger time window check")
+    seminar_reserve_parser.set_defaults(handler=seminar_reserve_command)
 
     interfaces_parser = subparsers.add_parser("interfaces", help="Print or export the observed interface catalog")
     interfaces_parser.add_argument("--format", choices=("json", "md"), help="Output format")

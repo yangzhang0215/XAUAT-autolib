@@ -9,13 +9,21 @@ from urllib.parse import urljoin
 
 from .authserver import direct_cas_login, extract_cas_value
 from .context import CommandContext, create_command_context
+from .config import SeminarDefaults, SeminarTarget
 from .interfaces_catalog import build_interface_catalog, render_catalog_markdown, render_catalog_summary
 from .member_seat import ACTIVE_SEAT_BOOKING_STATUSES, extract_active_seat_bookings, find_booking_by_id
 from .reserve_service import execute_reserve_once, resolve_candidate_seats
 from .result import is_success_response, is_token_expired_response
 from .seat_selection import get_first_available_time_segment
+from .seminar_service import (
+    build_seminar_submit_payload,
+    normalize_participant_cards,
+    resolve_group_members,
+    summarize_seminar_schedule,
+    validate_seminar_target,
+)
 from .time_utils import enforce_schedule_window, get_zoned_day_string, sleep_ms
-from .tree import flatten_seat_tree
+from .tree import flatten_seat_tree, flatten_seminar_tree
 
 
 EARLY_WINDOW_SECONDS = 60
@@ -407,6 +415,118 @@ def _build_area_label(room: dict[str, Any]) -> str:
     )
 
 
+def _extract_my_info_payload(response: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(response, dict):
+        return {}
+    data = response.get("data")
+    return data if isinstance(data, dict) else {}
+
+
+def _extract_current_user_card(ctx: CommandContext, my_info_response: dict[str, Any] | None) -> str | None:
+    candidates: list[Any] = []
+    candidates.extend(
+        [
+            (_extract_my_info_payload(my_info_response) or {}).get("card"),
+            (_extract_my_info_payload(my_info_response) or {}).get("username"),
+            (_extract_my_info_payload(my_info_response) or {}).get("studentNo"),
+        ]
+    )
+    user_info = ctx.state.get("userInfo")
+    if isinstance(user_info, dict):
+        candidates.extend([user_info.get("card"), user_info.get("username"), user_info.get("studentNo")])
+
+    for candidate in candidates:
+        text = _normalize_optional_string(candidate)
+        if text:
+            return text
+    return None
+
+
+def _normalize_seminar_text(value: Any, field_name: str) -> str:
+    text = _normalize_optional_string(value)
+    if not text:
+        raise ValueError(f"{field_name} is required")
+    return text
+
+
+def _resolve_seminar_defaults(ctx: CommandContext, args: Any) -> SeminarDefaults:
+    base = ctx.config.seminar.defaults
+    return SeminarDefaults(
+        title=_normalize_seminar_text(getattr(args, "title", None) or base.title, "Seminar title"),
+        content=_normalize_seminar_text(getattr(args, "content", None) or base.content, "Seminar content"),
+        mobile=_normalize_seminar_text(getattr(args, "mobile", None) or base.mobile, "Seminar mobile"),
+        open=str(getattr(args, "open", None) or base.open),
+    )
+
+
+def _build_explicit_seminar_target(args: Any) -> SeminarTarget | None:
+    raw_values = {
+        "roomId": getattr(args, "room_id", None),
+        "areaId": getattr(args, "area_id", None),
+        "day": getattr(args, "date", None),
+        "startTime": getattr(args, "start", None),
+        "endTime": getattr(args, "end", None),
+    }
+    provided = {key: _normalize_optional_string(value) for key, value in raw_values.items()}
+    provided_count = sum(1 for value in provided.values() if value)
+    if provided_count == 0:
+        return None
+    if provided_count != len(provided):
+        raise ValueError("Explicit seminar target requires --room-id, --area-id, --date, --start, and --end together.")
+
+    return SeminarTarget(
+        label="CLI target",
+        area_id=provided["areaId"],
+        room_id=provided["roomId"],
+        day=provided["day"] or "",
+        start_time=provided["startTime"] or "",
+        end_time=provided["endTime"] or "",
+    )
+
+
+def _resolve_seminar_targets(ctx: CommandContext, args: Any) -> list[SeminarTarget]:
+    explicit = _build_explicit_seminar_target(args)
+    if explicit is not None:
+        return [explicit]
+    return list(ctx.config.seminar.targets)
+
+
+def _seminar_target_to_dict(target: SeminarTarget) -> dict[str, Any]:
+    return {
+        "label": target.label,
+        "areaId": target.area_id,
+        "roomId": target.room_id,
+        "day": target.day,
+        "startTime": target.start_time,
+        "endTime": target.end_time,
+    }
+
+
+def _extract_list_payload(value: Any) -> list[Any]:
+    if isinstance(value, list):
+        return value
+    if isinstance(value, dict):
+        for key in ("data", "list", "rows", "items"):
+            nested = value.get(key)
+            if isinstance(nested, list):
+                return nested
+    return []
+
+
+def _extract_day_strings(value: Any) -> list[str]:
+    output: list[str] = []
+    for item in _extract_list_payload(value):
+        if isinstance(item, dict):
+            day = _normalize_optional_string(item.get("day") or item.get("date") or item.get("value"))
+            if day:
+                output.append(day)
+            continue
+        text = _normalize_optional_string(item)
+        if text:
+            output.append(text)
+    return output
+
+
 def login_command(args: Any) -> int:
     ctx = create_command_context("login")
     ctx.logger.info("Starting login flow")
@@ -756,6 +876,283 @@ def cancel_seat_command(args: Any) -> int:
 
     ctx.logger.warn("Cancellation API succeeded but verification is still pending", detail)
     print("Cancellation request succeeded, but the booking list has not refreshed yet.")
+    return 1
+
+
+def seminar_discover_command(args: Any) -> int:
+    ctx = create_command_context("seminar-discover")
+    requested_date = _normalize_optional_string(getattr(args, "date", None))
+    target_date = requested_date or get_zoned_day_string(None, ctx.config.time_zone)
+    include_daily_detail = requested_date is not None
+    ctx.logger.info("Starting seminar-discover flow", {"targetDate": target_date, "includeDailyDetail": include_daily_detail})
+
+    auth_result = _ensure_authenticated(ctx)
+    if not auth_result["ok"]:
+        detail = _auth_failure_detail(auth_result)
+        ctx.logger.error("Authentication failed during seminar-discover", detail)
+        print(_describe_auth_failure(auth_result))
+        return 1
+
+    tree_response = ctx.api.get_seminar_tree(date=target_date)
+    if not is_success_response(tree_response):
+        ctx.logger.error("Failed to fetch seminar tree", {"response": tree_response})
+        print(tree_response.get("msg", "Failed to fetch the seminar room tree"))
+        return 1
+
+    output: dict[str, Any] = {
+        "generatedAt": _utc_timestamp(),
+        "targetDate": target_date,
+        "rooms": [],
+        "targetTemplate": [],
+        "roomDetail": {},
+    }
+
+    rooms = [room for room in flatten_seminar_tree(tree_response.get("data")) if int(room.get("isValid", 1) or 0) == 1]
+    for room in rooms:
+        room_label = _build_area_label(room)
+        detail_response = ctx.api.get_seminar_detail(room_id=room["roomId"])
+        detail_data = detail_response.get("data") if is_success_response(detail_response) and isinstance(detail_response.get("data"), dict) else {}
+        if detail_data:
+            output["roomDetail"][str(room["roomId"])] = detail_data
+
+        room_date_response = ctx.api.get_seminar_date({"build_id": room["roomId"]})
+        available_days = _extract_day_strings(room_date_response.get("data")) if is_success_response(room_date_response) else []
+
+        room_record: dict[str, Any] = {
+            **room,
+            "label": room_label,
+            "availableDays": available_days,
+            "uploadRequired": bool(int(str(detail_data.get("upload", 0) or 0))),
+            "memberCount": detail_data.get("membercount"),
+        }
+
+        if include_daily_detail:
+            schedule_response = ctx.api.get_seminar_schedule(
+                room_id=room["roomId"],
+                area_id=room["areaId"],
+                day=target_date,
+            )
+            if is_success_response(schedule_response):
+                schedule_data = schedule_response.get("data") if isinstance(schedule_response.get("data"), dict) else {}
+                summary = summarize_seminar_schedule(
+                    schedule_data=schedule_data,
+                    detail_data=detail_data,
+                    time_zone=ctx.config.time_zone,
+                )
+                room_record["dailyAvailability"] = {
+                    "startTime": summary.get("startTime"),
+                    "endTime": summary.get("endTime"),
+                    "minPerson": summary.get("minPerson"),
+                    "maxPerson": summary.get("maxPerson"),
+                    "minTime": summary.get("minTime"),
+                    "maxTime": summary.get("maxTime"),
+                    "blockedRanges": summary.get("blockedRanges"),
+                    "uploadRequired": summary.get("uploadRequired"),
+                }
+                if summary.get("startTime") and summary.get("endTime"):
+                    output["targetTemplate"].append(
+                        {
+                            "label": room_label,
+                            "areaId": room["areaId"],
+                            "roomId": room["roomId"],
+                            "day": target_date,
+                            "startTime": summary["startTime"],
+                            "endTime": summary["endTime"],
+                        }
+                    )
+            else:
+                room_record["dailyAvailabilityError"] = schedule_response.get("msg", "Failed to fetch seminar daily schedule")
+
+        output["rooms"].append(room_record)
+
+    output_path = ctx.paths.runtime_dir / f"seminar-discover-{target_date.replace('-', '')}.json"
+    _write_json(output_path, output)
+    ctx.logger.info("Seminar discover result written", {"filePath": str(output_path), "roomCount": len(output["rooms"])})
+
+    print(f"Wrote seminar discover result to: {output_path}")
+    print(f"Seminar rooms: {len(output['rooms'])}")
+    return 0
+
+
+def seminar_reserve_command(args: Any) -> int:
+    ctx = create_command_context("seminar-reserve")
+    force = bool(getattr(args, "force", False))
+    ctx.logger.info("Starting seminar-reserve flow", {"force": force})
+
+    if not force:
+        schedule = enforce_schedule_window(
+            trigger_time=ctx.config.seminar.trigger_time,
+            time_zone=ctx.config.time_zone,
+            early_window_seconds=EARLY_WINDOW_SECONDS,
+            late_window_seconds=LATE_WINDOW_SECONDS,
+        )
+        if not schedule.ok:
+            _save_state_payload(ctx, "lastSeminarReserve", "schedule_miss", {"reason": schedule.reason})
+            ctx.logger.warn("Seminar execution skipped because schedule window was missed", {"reason": schedule.reason})
+            print(f"Execution skipped: {schedule.reason}")
+            return 1
+        if schedule.delay_ms > 0:
+            ctx.logger.info("Waiting until seminar trigger time", {"delayMs": schedule.delay_ms})
+            sleep_ms(schedule.delay_ms)
+
+    auth_result = _ensure_authenticated(ctx)
+    if not auth_result["ok"]:
+        detail = _auth_failure_detail(auth_result)
+        _save_state_payload(ctx, "lastSeminarReserve", "api_error", detail)
+        ctx.logger.error("Authentication failed during seminar-reserve", detail)
+        print(_describe_auth_failure(auth_result))
+        return 1
+
+    try:
+        defaults = _resolve_seminar_defaults(ctx, args)
+        targets = _resolve_seminar_targets(ctx, args)
+    except ValueError as exc:
+        _save_state_payload(ctx, "lastSeminarReserve", "api_error", {"reason": "invalid_arguments", "message": str(exc)})
+        ctx.logger.error("Invalid seminar arguments", {"message": str(exc)})
+        print(str(exc))
+        return 1
+
+    if not targets:
+        _save_state_payload(ctx, "lastSeminarReserve", "no_available_target", {"reason": "no_target_configured"})
+        ctx.logger.warn("No seminar target is configured")
+        print("No seminar target is configured.")
+        return 1
+
+    organizer_card = _extract_current_user_card(ctx, auth_result.get("myInfo"))
+    raw_participant_cards = normalize_participant_cards(getattr(args, "participant", None))
+    skipped_targets: list[dict[str, Any]] = []
+    api_failures: list[dict[str, Any]] = []
+
+    for target in targets:
+        detail_response = ctx.api.get_seminar_detail(room_id=target.room_id)
+        if not is_success_response(detail_response):
+            failure = {"target": _seminar_target_to_dict(target), "response": detail_response}
+            api_failures.append(failure)
+            ctx.logger.warn("Skipping seminar target because detail query failed", failure)
+            continue
+
+        detail_data = detail_response.get("data") if isinstance(detail_response.get("data"), dict) else {}
+        schedule_response = ctx.api.get_seminar_schedule(
+            room_id=target.room_id,
+            area_id=target.area_id,
+            day=target.day,
+        )
+        if not is_success_response(schedule_response):
+            failure = {"target": _seminar_target_to_dict(target), "response": schedule_response}
+            api_failures.append(failure)
+            ctx.logger.warn("Skipping seminar target because real-time schedule query failed", failure)
+            continue
+
+        schedule_data = schedule_response.get("data") if isinstance(schedule_response.get("data"), dict) else {}
+        validation = validate_seminar_target(
+            target=target,
+            schedule_data=schedule_data,
+            detail_data=detail_data,
+            participant_count=len(raw_participant_cards),
+            time_zone=ctx.config.time_zone,
+        )
+        if not validation["ok"] and validation["reason"] == "upload_required":
+            detail = {
+                "reason": validation["reason"],
+                "message": validation["detail"],
+                "target": _seminar_target_to_dict(target),
+                "summary": validation.get("summary"),
+            }
+            _save_state_payload(ctx, "lastSeminarReserve", "api_error", detail)
+            ctx.logger.error("Seminar target requires upload and cannot be submitted", detail)
+            print(validation["detail"])
+            return 1
+        if not validation["ok"]:
+            skipped = {
+                "target": _seminar_target_to_dict(target),
+                "reason": validation["reason"],
+                "detail": validation["detail"],
+                "summary": validation.get("summary"),
+            }
+            skipped_targets.append(skipped)
+            ctx.logger.warn("Skipping seminar target after local validation", skipped)
+            continue
+
+        participants_result = resolve_group_members(
+            api=ctx.api,
+            participant_cards=raw_participant_cards,
+            organizer_card=organizer_card,
+        )
+        if not participants_result["ok"]:
+            detail = {
+                "reason": participants_result.get("reason"),
+                "message": participants_result.get("detail"),
+                "card": participants_result.get("card"),
+                "response": participants_result.get("response"),
+                "target": _seminar_target_to_dict(target),
+            }
+            _save_state_payload(ctx, "lastSeminarReserve", "api_error", detail)
+            ctx.logger.error("Failed to resolve seminar participants", detail)
+            print(participants_result.get("detail") or "Failed to resolve participants")
+            return 1
+
+        participants = participants_result["participants"]
+        resolved_validation = validate_seminar_target(
+            target=target,
+            schedule_data=schedule_data,
+            detail_data=detail_data,
+            participant_count=len(participants.member_ids),
+            time_zone=ctx.config.time_zone,
+        )
+        if not resolved_validation["ok"]:
+            skipped = {
+                "target": _seminar_target_to_dict(target),
+                "reason": resolved_validation["reason"],
+                "detail": resolved_validation["detail"],
+                "summary": resolved_validation.get("summary"),
+            }
+            skipped_targets.append(skipped)
+            ctx.logger.warn("Skipping seminar target after participant resolution", skipped)
+            continue
+
+        payload = build_seminar_submit_payload(
+            target=target,
+            defaults=defaults,
+            teamusers=participants.teamusers,
+        )
+        submit_response = ctx.api.submit_seminar(payload)
+        if not is_success_response(submit_response):
+            detail = {
+                "reason": "submit_failed",
+                "message": submit_response.get("msg", "Seminar reservation submission failed"),
+                "response": submit_response,
+                "target": _seminar_target_to_dict(target),
+                "teamusers": participants.teamusers,
+            }
+            _save_state_payload(ctx, "lastSeminarReserve", "api_error", detail)
+            ctx.logger.error("Seminar reservation submission failed", detail)
+            print(detail["message"])
+            return 1
+
+        success_detail = {
+            "target": _seminar_target_to_dict(target),
+            "teamusers": participants.teamusers,
+            "participantCards": participants.cards,
+            "participantIds": participants.member_ids,
+            "response": submit_response,
+        }
+        _save_state_payload(ctx, "lastSeminarReserve", "success", success_detail)
+        ctx.logger.info("Seminar reservation succeeded", success_detail)
+        print(
+            f"Seminar reservation succeeded: roomId={target.room_id}, "
+            f"day={target.day}, {target.start_time}-{target.end_time}"
+        )
+        return 0
+
+    status = "api_error" if api_failures and not skipped_targets else "no_available_target"
+    detail = {
+        "targetCount": len(targets),
+        "skippedTargets": skipped_targets,
+        "apiFailures": api_failures,
+    }
+    _save_state_payload(ctx, "lastSeminarReserve", status, detail)
+    ctx.logger.warn("No seminar target could be submitted", detail)
+    print("No seminar target could be submitted.")
     return 1
 
 
