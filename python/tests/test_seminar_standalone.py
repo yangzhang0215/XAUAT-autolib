@@ -41,16 +41,19 @@ class _Api:
         *,
         upload_required_rooms: set[str] | None = None,
         unavailable_rooms: set[str] | None = None,
+        empty_date_rooms: set[str] | None = None,
         group_fail_card: str | None = None,
         submit_fail_rooms: set[str] | None = None,
         submit_fail_windows: set[str] | None = None,
     ) -> None:
         self.upload_required_rooms = set(upload_required_rooms or set())
         self.unavailable_rooms = set(unavailable_rooms or set())
+        self.empty_date_rooms = set(empty_date_rooms or set())
         self.group_fail_card = group_fail_card
         self.submit_fail_rooms = set(submit_fail_rooms or set())
         self.submit_fail_windows = set(submit_fail_windows or set())
-        self.submit_payloads: list[dict[str, object]] = []
+        self.confirm_payloads: list[dict[str, object]] = []
+        self.group_calls: list[dict[str, object]] = []
 
     def get_my_info(self):
         return {"code": 1, "data": {"card": "2504811004", "name": "tester"}}
@@ -78,6 +81,8 @@ class _Api:
 
     def get_seminar_date(self, payload):
         room_id = str(payload["build_id"])
+        if room_id in self.empty_date_rooms:
+            return {"code": 1, "data": []}
         if room_id in self.unavailable_rooms:
             return {"code": 1, "data": [NEXT_DAY]}
         return {"code": 1, "data": [TEST_DAY]}
@@ -98,7 +103,15 @@ class _Api:
             },
         }
 
-    def get_seminar_group(self, *, card):
+    def get_seminar_group(self, *, card, room_id=None, begin_time=None, end_time=None):
+        self.group_calls.append(
+            {
+                "card": card,
+                "room_id": room_id,
+                "begin_time": begin_time,
+                "end_time": end_time,
+            }
+        )
         if card == self.group_fail_card:
             return {"code": 0, "msg": f"Failed to resolve participant: {card}"}
         mapping = {
@@ -107,8 +120,8 @@ class _Api:
         }
         return {"code": 1, "data": mapping[card]}
 
-    def submit_seminar(self, payload):
-        self.submit_payloads.append(payload)
+    def confirm_seminar_reservation(self, payload):
+        self.confirm_payloads.append(payload)
         window_key = f"{payload['start_time']}-{payload['end_time']}"
         if str(payload["room"]) in self.submit_fail_rooms or window_key in self.submit_fail_windows:
             return {"code": 0, "msg": "submit failed"}
@@ -197,7 +210,17 @@ class SeminarStandaloneTests(unittest.TestCase):
 
         self.assertEqual(code, 0)
         self.assertEqual(ctx.state["lastSeminarToolReserve"]["status"], "success")
-        self.assertEqual(ctx.api.submit_payloads[0]["room"], 35)
+        self.assertEqual(ctx.api.confirm_payloads[0]["room"], 35)
+        self.assertEqual(ctx.api.confirm_payloads[0]["id"], 2)
+        self.assertEqual(
+            ctx.api.group_calls[0],
+            {
+                "card": "2501",
+                "room_id": 35,
+                "begin_time": f"{TEST_DAY} 14:00",
+                "end_time": f"{TEST_DAY} 16:00",
+            },
+        )
 
     def test_reserve_command_falls_back_to_next_priority_room(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -224,7 +247,35 @@ class SeminarStandaloneTests(unittest.TestCase):
                 code = reserve_command(args)
 
         self.assertEqual(code, 0)
-        self.assertEqual(ctx.api.submit_payloads[0]["room"], 35)
+        self.assertEqual(ctx.api.confirm_payloads[0]["room"], 35)
+
+    def test_reserve_command_does_not_block_on_empty_available_days(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ctx = _Context(_Api(empty_date_rooms={"35"}), Path(temp_dir) / "python", priority_room_ids=[])
+            args = SimpleNamespace(
+                date=TEST_DAY,
+                start="14:00",
+                end="16:00",
+                mobile="13800000000",
+                participant=["2501"],
+                room_id="35",
+                title="Standalone topic",
+                content="Standalone content",
+                open="1",
+                trigger_time=None,
+                wait=False,
+                force=True,
+            )
+
+            with patch("libspace_cli.seminar_standalone.create_seminar_tool_context", return_value=ctx), patch(
+                "libspace_cli.seminar_standalone._can_prompt",
+                return_value=False,
+            ):
+                code = reserve_command(args)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(ctx.state["lastSeminarToolReserve"]["status"], "success")
+        self.assertEqual(ctx.api.confirm_payloads[0]["room"], 35)
 
     def test_reserve_command_prefers_config_priority_room_over_cli_room_id(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -251,11 +302,11 @@ class SeminarStandaloneTests(unittest.TestCase):
                 code = reserve_command(args)
 
         self.assertEqual(code, 0)
-        self.assertEqual(ctx.api.submit_payloads[0]["room"], 34)
-        self.assertEqual(ctx.api.submit_payloads[0]["title"], "Standalone topic")
-        self.assertEqual(ctx.api.submit_payloads[0]["content"], "Standalone content")
-        self.assertEqual(ctx.api.submit_payloads[0]["mobile"], "13800000000")
-        self.assertEqual(ctx.api.submit_payloads[0]["open"], "1")
+        self.assertEqual(ctx.api.confirm_payloads[0]["room"], 34)
+        self.assertEqual(ctx.api.confirm_payloads[0]["title"], "Standalone topic")
+        self.assertEqual(ctx.api.confirm_payloads[0]["content"], "Standalone content")
+        self.assertEqual(ctx.api.confirm_payloads[0]["mobile"], "13800000000")
+        self.assertEqual(ctx.api.confirm_payloads[0]["open"], "1")
 
     def test_reserve_command_uses_config_time_and_splits_into_two_submissions(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -284,15 +335,17 @@ class SeminarStandaloneTests(unittest.TestCase):
             with patch("libspace_cli.seminar_standalone.create_seminar_tool_context", return_value=ctx), patch(
                 "libspace_cli.seminar_standalone._can_prompt",
                 return_value=False,
-            ):
+            ), patch("libspace_cli.seminar_standalone.sleep_ms") as mock_sleep:
                 code = reserve_command(args)
 
         self.assertEqual(code, 0)
-        self.assertEqual(len(ctx.api.submit_payloads), 2)
-        self.assertEqual(ctx.api.submit_payloads[0]["start_time"], "08:00")
-        self.assertEqual(ctx.api.submit_payloads[0]["end_time"], "12:00")
-        self.assertEqual(ctx.api.submit_payloads[1]["start_time"], "12:15")
-        self.assertEqual(ctx.api.submit_payloads[1]["end_time"], "16:15")
+        self.assertEqual(len(ctx.api.confirm_payloads), 2)
+        self.assertEqual(ctx.api.confirm_payloads[0]["start_time"], "08:00")
+        self.assertEqual(ctx.api.confirm_payloads[0]["end_time"], "12:00")
+        self.assertEqual(ctx.api.confirm_payloads[1]["start_time"], "12:15")
+        self.assertEqual(ctx.api.confirm_payloads[1]["end_time"], "16:15")
+        self.assertEqual(mock_sleep.call_count, 1)
+        self.assertEqual(mock_sleep.call_args.args[0], 10000)
 
     def test_reserve_command_reports_participant_lookup_failure(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -528,13 +581,13 @@ class SeminarStandaloneTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "only support the current day"):
                 _resolve_reserve_options(ctx, args, allow_prompt=False)
 
-    def test_resolve_reserve_options_rejects_total_time_over_eight_hours(self) -> None:
+    def test_resolve_reserve_options_rejects_total_span_over_eight_hours_fifteen_minutes(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             ctx = _Context(_Api(), Path(temp_dir) / "python", priority_room_ids=[])
             args = SimpleNamespace(
                 date=TEST_DAY,
                 start="08:00",
-                end="16:30",
+                end="16:16",
                 mobile="19999999999",
                 participant=["2501"],
                 room_id="35",
@@ -546,7 +599,7 @@ class SeminarStandaloneTests(unittest.TestCase):
                 force=True,
             )
 
-            with self.assertRaisesRegex(ValueError, "cannot exceed 8 hours"):
+            with self.assertRaisesRegex(ValueError, "cannot exceed 8 hours 15 minutes"):
                 _resolve_reserve_options(ctx, args, allow_prompt=False)
 
     def test_resolve_reserve_options_rejects_after_library_close(self) -> None:

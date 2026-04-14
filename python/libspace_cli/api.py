@@ -93,8 +93,26 @@ class LibraryApi:
     def get_seminar_schedule(self, *, room_id: Any, area_id: Any, day: str) -> dict[str, Any]:
         return self.http.post("/api/Seminar/seminar", {"room": room_id, "area": area_id, "day": day})
 
-    def get_seminar_group(self, *, card: str) -> dict[str, Any]:
-        return self.http.post("/api/Seminar/group", {"card": card})
+    def get_seminar_group(
+        self,
+        *,
+        card: str,
+        room_id: Any | None = None,
+        begin_time: str | None = None,
+        end_time: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"card": card}
+        if room_id not in (None, ""):
+            # The current frontend sends the selected room id as "area".
+            payload["area"] = room_id
+        if begin_time:
+            payload["beginTime"] = begin_time
+        if end_time:
+            payload["endTime"] = end_time
+        return self.http.post("/api/Seminar/group", payload)
+
+    def confirm_seminar_reservation(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self.http.post("/reserve/index/confirm", payload, encrypt=True)
 
     def submit_seminar(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self.http.post("/api/Seminar/submit", payload)
