@@ -24,7 +24,8 @@ from .result import is_success_response
 from .runtime_paths import RuntimePaths, ensure_runtime_dirs, resolve_named_runtime_paths
 from .seminar_service import (
     LIBRARY_CLOSE_TIME,
-    build_seminar_submit_payload,
+    build_seminar_group_lookup_time,
+    build_seminar_confirm_payload,
     group_seminar_rooms_by_floor,
     normalize_participant_cards,
     resolve_group_members,
@@ -54,8 +55,9 @@ SHORT_TIME_RE = re.compile(r"^\d{2}:\d{2}$")
 EARLY_WINDOW_SECONDS = 60
 LATE_WINDOW_SECONDS = 60
 MAX_SINGLE_RESERVE_MINUTES = 4 * 60
-MAX_TOTAL_RESERVE_MINUTES = 8 * 60
 SECOND_RESERVE_GAP_MINUTES = 15
+MAX_TOTAL_RESERVATION_SPAN_MINUTES = MAX_SINGLE_RESERVE_MINUTES * 2 + SECOND_RESERVE_GAP_MINUTES
+SECOND_RESERVE_SUBMIT_DELAY_MS = 10 * 1000
 
 
 @dataclass
@@ -180,6 +182,9 @@ def _build_reservation_windows(start_time: str, end_time: str) -> tuple[Reservat
     if total_span <= MAX_SINGLE_RESERVE_MINUTES:
         return (ReservationWindow(start_time=start_time, end_time=end_time),)
 
+    if total_span > MAX_TOTAL_RESERVATION_SPAN_MINUTES:
+        raise ValueError("Total seminar time span cannot exceed 8 hours 15 minutes.")
+
     first_end_minutes = start_minutes + MAX_SINGLE_RESERVE_MINUTES
     second_start_minutes = first_end_minutes + SECOND_RESERVE_GAP_MINUTES
     if end_minutes <= second_start_minutes:
@@ -187,10 +192,6 @@ def _build_reservation_windows(start_time: str, end_time: str) -> tuple[Reservat
             "When the requested time exceeds 4 hours, the end time must be later than "
             "the first reservation end time plus 15 minutes."
         )
-
-    total_reserved_minutes = MAX_SINGLE_RESERVE_MINUTES + (end_minutes - second_start_minutes)
-    if total_reserved_minutes > MAX_TOTAL_RESERVE_MINUTES:
-        raise ValueError("Total seminar reservation time cannot exceed 8 hours.")
 
     return (
         ReservationWindow(
@@ -565,7 +566,10 @@ def _check_room_available_on_day(ctx: SeminarToolContext, room: dict[str, Any], 
         )
 
     available_days = _extract_day_strings(response.get("data"))
-    if request.day not in available_days:
+    # Some current seminar rooms return an empty date list even though the same-day
+    # schedule/details and the final reservation flow are valid. Treat an empty
+    # date-list response as inconclusive instead of blocking the reservation early.
+    if available_days and request.day not in available_days:
         return False, _build_skip_record(
             room=room,
             request=request,
@@ -582,8 +586,7 @@ def _attempt_reservation_for_room(
     ctx: SeminarToolContext,
     room: dict[str, Any],
     request: ResolvedReserveOptions,
-    participant_ids: list[str],
-    teamusers: str,
+    organizer_card: str | None,
 ) -> tuple[bool, dict[str, Any]]:
     day_ok, day_failure = _check_room_available_on_day(ctx, room, request)
     if not day_ok and day_failure is not None:
@@ -615,6 +618,30 @@ def _attempt_reservation_for_room(
         )
     schedule_data = schedule_response.get("data") if isinstance(schedule_response.get("data"), dict) else {}
 
+    lookup_window = request.windows[0]
+    participants_result = resolve_group_members(
+        api=ctx.api,
+        participant_cards=request.participant_cards,
+        organizer_card=organizer_card,
+        lookup_room_id=room["roomId"],
+        lookup_begin_time=build_seminar_group_lookup_time(day=request.day, time_text=lookup_window.start_time),
+        lookup_end_time=build_seminar_group_lookup_time(day=request.day, time_text=lookup_window.end_time),
+    )
+    if not participants_result["ok"]:
+        failure = _build_skip_record(
+            room=room,
+            request=request,
+            reason=str(participants_result.get("reason") or "group_lookup_failed"),
+            detail=str(participants_result.get("detail") or "Failed to resolve participants."),
+            response=participants_result.get("response"),
+            start_time=lookup_window.start_time,
+            end_time=lookup_window.end_time,
+        )
+        if participants_result.get("card"):
+            failure["card"] = participants_result.get("card")
+        return False, failure
+    participants = participants_result["participants"]
+
     for window in request.windows:
         target = _build_target(
             room,
@@ -626,7 +653,7 @@ def _attempt_reservation_for_room(
             target=target,
             schedule_data=schedule_data,
             detail_data=detail_data,
-            participant_count=len(participant_ids),
+            participant_count=len(participants.member_ids),
             time_zone=ctx.config.time_zone,
         )
         if not validation["ok"]:
@@ -641,19 +668,19 @@ def _attempt_reservation_for_room(
             )
 
     submitted_reservations: list[dict[str, Any]] = []
-    for window in request.windows:
+    for index, window in enumerate(request.windows):
         target = _build_target(
             room,
             day=request.day,
             start_time=window.start_time,
             end_time=window.end_time,
         )
-        payload = build_seminar_submit_payload(
+        payload = build_seminar_confirm_payload(
             target=target,
             defaults=request.defaults,
-            teamusers=teamusers,
+            teamusers=participants.teamusers,
         )
-        submit_response = ctx.api.submit_seminar(payload)
+        submit_response = ctx.api.confirm_seminar_reservation(payload)
         if not is_success_response(submit_response):
             return False, _build_skip_record(
                 room=room,
@@ -678,7 +705,19 @@ def _attempt_reservation_for_room(
             }
         )
 
-    return True, {"reservations": submitted_reservations}
+        if index < len(request.windows) - 1:
+            ctx.logger.info(
+                "Waiting before the next seminar reservation submission",
+                {
+                    "roomId": room.get("roomId"),
+                    "delayMs": SECOND_RESERVE_SUBMIT_DELAY_MS,
+                    "nextStartTime": request.windows[index + 1].start_time,
+                    "nextEndTime": request.windows[index + 1].end_time,
+                },
+            )
+            sleep_ms(SECOND_RESERVE_SUBMIT_DELAY_MS)
+
+    return True, {"participants": participants, "reservations": submitted_reservations}
 
 
 def _build_reserve_success_detail(
@@ -949,24 +988,6 @@ def reserve_command(args: Any) -> int:
         return 1
 
     organizer_card = _extract_current_user_card(ctx, auth_result.get("myInfo"))
-    participants_result = resolve_group_members(
-        api=ctx.api,
-        participant_cards=request.participant_cards,
-        organizer_card=organizer_card,
-    )
-    if not participants_result["ok"]:
-        detail = {
-            "reason": participants_result.get("reason"),
-            "message": participants_result.get("detail"),
-            "card": participants_result.get("card"),
-            "response": participants_result.get("response"),
-        }
-        _save_state_payload(ctx, SEMINAR_TOOL_RESERVE_STATE_KEY, "api_error", detail)
-        ctx.logger.error("Failed to resolve seminar participants for standalone reserve", detail)
-        print(participants_result.get("detail") or "Failed to resolve participants")
-        return 1
-
-    participants = participants_result["participants"]
 
     try:
         room_lookup, valid_lookup = _get_room_maps(ctx, request.day)
@@ -998,10 +1019,10 @@ def reserve_command(args: Any) -> int:
             ctx=ctx,
             room=room,
             request=request,
-            participant_ids=participants.member_ids,
-            teamusers=participants.teamusers,
+            organizer_card=organizer_card,
         )
         if success:
+            participants = result["participants"]
             success_detail = _build_reserve_success_detail(
                 room=room,
                 request=request,
@@ -1040,6 +1061,7 @@ def reserve_command(args: Any) -> int:
             detail = {
                 "reason": result["reason"],
                 "message": result["detail"],
+                "card": result.get("card"),
                 "target": result.get("target"),
                 "summary": result.get("summary"),
                 "response": result.get("response"),
@@ -1050,6 +1072,27 @@ def reserve_command(args: Any) -> int:
             return 1
 
         ctx.logger.warn("Skipping priority seminar room after reservation attempt", result)
+
+    participant_failure = next(
+        (
+            item
+            for item in skipped_rooms
+            if item.get("reason") in {"group_lookup_failed", "group_lookup_invalid", "self_in_participants"}
+        ),
+        None,
+    )
+    if participant_failure is not None:
+        detail = {
+            "reason": participant_failure["reason"],
+            "message": participant_failure["detail"],
+            "card": participant_failure.get("card"),
+            "target": participant_failure.get("target"),
+            "response": participant_failure.get("response"),
+        }
+        _save_state_payload(ctx, SEMINAR_TOOL_RESERVE_STATE_KEY, "api_error", detail)
+        ctx.logger.error("Failed to resolve seminar participants for standalone reserve", detail)
+        print(participant_failure["detail"])
+        return 1
 
     detail = {
         "reason": "no_room_submitted",

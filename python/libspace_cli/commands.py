@@ -16,7 +16,8 @@ from .reserve_service import execute_reserve_once, resolve_candidate_seats
 from .result import is_success_response, is_token_expired_response
 from .seat_selection import get_first_available_time_segment
 from .seminar_service import (
-    build_seminar_submit_payload,
+    build_seminar_group_lookup_time,
+    build_seminar_confirm_payload,
     normalize_participant_cards,
     resolve_group_members,
     summarize_seminar_schedule,
@@ -1077,6 +1078,9 @@ def seminar_reserve_command(args: Any) -> int:
             api=ctx.api,
             participant_cards=raw_participant_cards,
             organizer_card=organizer_card,
+            lookup_room_id=target.room_id,
+            lookup_begin_time=build_seminar_group_lookup_time(day=target.day, time_text=target.start_time),
+            lookup_end_time=build_seminar_group_lookup_time(day=target.day, time_text=target.end_time),
         )
         if not participants_result["ok"]:
             detail = {
@@ -1110,12 +1114,12 @@ def seminar_reserve_command(args: Any) -> int:
             ctx.logger.warn("Skipping seminar target after participant resolution", skipped)
             continue
 
-        payload = build_seminar_submit_payload(
+        payload = build_seminar_confirm_payload(
             target=target,
             defaults=defaults,
             teamusers=participants.teamusers,
         )
-        submit_response = ctx.api.submit_seminar(payload)
+        submit_response = ctx.api.confirm_seminar_reservation(payload)
         if not is_success_response(submit_response):
             detail = {
                 "reason": "submit_failed",

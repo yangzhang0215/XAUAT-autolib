@@ -34,6 +34,17 @@ class SeminarResolvedParticipants:
     member_ids: list[str]
 
 
+def build_seminar_group_lookup_time(*, day: str, time_text: str | None) -> str | None:
+    day_text = str(day or "").strip()
+    if not day_text:
+        return None
+
+    normalized_time = _normalize_time_text(time_text)
+    if normalized_time:
+        return f"{day_text} {normalized_time}"
+    return day_text
+
+
 def normalize_participant_cards(cards: list[Any] | None) -> list[str]:
     normalized: list[str] = []
     seen: set[str] = set()
@@ -51,6 +62,9 @@ def resolve_group_members(
     api: Any,
     participant_cards: list[str],
     organizer_card: str | None,
+    lookup_room_id: Any | None = None,
+    lookup_begin_time: str | None = None,
+    lookup_end_time: str | None = None,
 ) -> dict[str, Any]:
     members: list[dict[str, Any]] = []
     seen_member_ids: set[str] = set()
@@ -64,7 +78,12 @@ def resolve_group_members(
                 "card": card,
             }
 
-        response = api.get_seminar_group(card=card)
+        response = api.get_seminar_group(
+            card=card,
+            room_id=lookup_room_id,
+            begin_time=lookup_begin_time,
+            end_time=lookup_end_time,
+        )
         if not is_success_response(response):
             return {
                 "ok": False,
@@ -387,7 +406,7 @@ def validate_seminar_target(
     return {"ok": True, "reason": None, "detail": None, "summary": summary}
 
 
-def build_seminar_submit_payload(
+def build_seminar_confirm_payload(
     *,
     target: SeminarTarget,
     defaults: SeminarDefaults,
@@ -404,7 +423,17 @@ def build_seminar_submit_payload(
         "open": defaults.open,
         "file_name": "",
         "file_url": "",
+        "id": 2,
     }
     if teamusers:
         payload["teamusers"] = teamusers
     return payload
+
+
+def build_seminar_submit_payload(
+    *,
+    target: SeminarTarget,
+    defaults: SeminarDefaults,
+    teamusers: str,
+) -> dict[str, Any]:
+    return build_seminar_confirm_payload(target=target, defaults=defaults, teamusers=teamusers)

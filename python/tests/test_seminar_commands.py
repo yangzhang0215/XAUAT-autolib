@@ -27,7 +27,8 @@ class _Logger:
 
 class _ReserveApi:
     def __init__(self) -> None:
-        self.submit_payloads = []
+        self.confirm_payloads = []
+        self.group_calls = []
 
     def get_my_info(self):
         return {"code": 1, "data": {"card": "2504811004", "name": "tester"}}
@@ -47,12 +48,20 @@ class _ReserveApi:
             },
         }
 
-    def get_seminar_group(self, *, card):
+    def get_seminar_group(self, *, card, room_id=None, begin_time=None, end_time=None):
+        self.group_calls.append(
+            {
+                "card": card,
+                "room_id": room_id,
+                "begin_time": begin_time,
+                "end_time": end_time,
+            }
+        )
         member_id = {"2501": 11, "2502": 12}[card]
         return {"code": 1, "data": {"id": member_id, "card": card, "name": f"user-{card}"}}
 
-    def submit_seminar(self, payload):
-        self.submit_payloads.append(payload)
+    def confirm_seminar_reservation(self, payload):
+        self.confirm_payloads.append(payload)
         return {"code": 1, "msg": "ok"}
 
 
@@ -169,7 +178,17 @@ class SeminarCommandTests(unittest.TestCase):
 
         self.assertEqual(code, 0)
         self.assertEqual(ctx.state["lastSeminarReserve"]["status"], "success")
-        self.assertEqual(ctx.api.submit_payloads[0]["teamusers"], "11,12")
+        self.assertEqual(ctx.api.confirm_payloads[0]["teamusers"], "11,12")
+        self.assertEqual(ctx.api.confirm_payloads[0]["id"], 2)
+        self.assertEqual(
+            ctx.api.group_calls[0],
+            {
+                "card": "2501",
+                "room_id": "34",
+                "begin_time": "2026-04-08 14:00",
+                "end_time": "2026-04-08 16:00",
+            },
+        )
 
     def test_seminar_reserve_command_rejects_partial_explicit_target(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
