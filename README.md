@@ -22,6 +22,28 @@ GitHub Release 里我建议优先下载这个：
 
 - `xauat-seminar-gui\xauat-seminar-gui.exe`
 
+## 如果你在 Mac 上用 CLI
+
+GitHub Release 里对应的是：
+- `xauat-seminar-cli-mac.zip`
+
+这个包是给 macOS 终端用的，不包含 GUI。
+解压后进入目录，先执行：
+
+```bash
+bash run.sh install
+cp python/seminar.config.example.json python/seminar.config.local.json
+```
+
+然后按需执行：
+
+```bash
+bash run.sh doctor
+bash run.sh discover
+bash run.sh reserve-now
+bash run.sh reserve-wait
+```
+
 ## 这个 GUI 能做什么
 
 - 独立预约研讨室，不走统一 CLI
@@ -135,7 +157,7 @@ GitHub Release 里我建议优先下载这个：
 - 超过 4 小时会自动拆成两段
 - 两段之间固定间隔 15 分钟
 - 总跨度不能超过 8 小时 15 分钟
-- 两段预约请求之间会间隔 10 秒发送
+- 两段预约请求之间会真实等待 15 分钟后再发送
 
 比如你填：
 

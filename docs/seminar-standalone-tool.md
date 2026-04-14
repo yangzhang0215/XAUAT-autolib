@@ -41,6 +41,7 @@ Copy-Item python\seminar.config.example.json python\seminar.config.local.json
 - 单次请求最多 4 小时
 - 超过 4 小时时自动拆成两段
 - 第二段从第一段结束 15 分钟后开始
+- 第二段预约请求会在第一段提交成功后真实等待 15 分钟再发送
 - 例如 `08:00 -> 16:15` 会拆成：
   - `08:00-12:00`
   - `12:15-16:15`

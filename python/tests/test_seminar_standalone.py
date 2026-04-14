@@ -345,7 +345,7 @@ class SeminarStandaloneTests(unittest.TestCase):
         self.assertEqual(ctx.api.confirm_payloads[1]["start_time"], "12:15")
         self.assertEqual(ctx.api.confirm_payloads[1]["end_time"], "16:15")
         self.assertEqual(mock_sleep.call_count, 1)
-        self.assertEqual(mock_sleep.call_args.args[0], 10000)
+        self.assertEqual(mock_sleep.call_args.args[0], 15 * 60 * 1000)
 
     def test_reserve_command_reports_participant_lookup_failure(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
