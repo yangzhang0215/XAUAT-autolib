@@ -204,6 +204,7 @@ bash run.sh reserve-wait
 ## 文档
 
 - [GUI 使用说明](docs/seminar-gui.md)
+- [预约加密与完整流程](docs/reservation-encryption-and-flow.md)
 - [独立研讨室工具说明](docs/seminar-standalone-tool.md)
 - [研讨室 roomId 对照表](docs/seminar-room-id-table.md)
 - [普通座位 seatId 对照表](docs/seat-id-table.md)

@@ -57,7 +57,6 @@ LATE_WINDOW_SECONDS = 60
 MAX_SINGLE_RESERVE_MINUTES = 4 * 60
 SECOND_RESERVE_GAP_MINUTES = 15
 MAX_TOTAL_RESERVATION_SPAN_MINUTES = MAX_SINGLE_RESERVE_MINUTES * 2 + SECOND_RESERVE_GAP_MINUTES
-SECOND_RESERVE_SUBMIT_DELAY_MS = SECOND_RESERVE_GAP_MINUTES * 60 * 1000
 
 
 @dataclass
@@ -704,18 +703,6 @@ def _attempt_reservation_for_room(
                 "response": submit_response,
             }
         )
-
-        if index < len(request.windows) - 1:
-            ctx.logger.info(
-                "Waiting before the next seminar reservation submission",
-                {
-                    "roomId": room.get("roomId"),
-                    "delayMs": SECOND_RESERVE_SUBMIT_DELAY_MS,
-                    "nextStartTime": request.windows[index + 1].start_time,
-                    "nextEndTime": request.windows[index + 1].end_time,
-                },
-            )
-            sleep_ms(SECOND_RESERVE_SUBMIT_DELAY_MS)
 
     return True, {"participants": participants, "reservations": submitted_reservations}
 

@@ -308,7 +308,7 @@ class SeminarStandaloneTests(unittest.TestCase):
         self.assertEqual(ctx.api.confirm_payloads[0]["mobile"], "13800000000")
         self.assertEqual(ctx.api.confirm_payloads[0]["open"], "1")
 
-    def test_reserve_command_uses_config_time_and_splits_into_two_submissions(self) -> None:
+    def test_reserve_command_uses_config_time_and_splits_into_two_submissions_without_submit_delay(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             ctx = _Context(
                 _Api(),
@@ -344,8 +344,7 @@ class SeminarStandaloneTests(unittest.TestCase):
         self.assertEqual(ctx.api.confirm_payloads[0]["end_time"], "12:00")
         self.assertEqual(ctx.api.confirm_payloads[1]["start_time"], "12:15")
         self.assertEqual(ctx.api.confirm_payloads[1]["end_time"], "16:15")
-        self.assertEqual(mock_sleep.call_count, 1)
-        self.assertEqual(mock_sleep.call_args.args[0], 15 * 60 * 1000)
+        self.assertEqual(mock_sleep.call_count, 0)
 
     def test_reserve_command_reports_participant_lookup_failure(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -31,6 +31,14 @@ if (-not (Test-Path $iconPath)) {
 Write-Host "Using interpreter:" $PythonExe
 Write-Host "Building standalone seminar GUI..."
 
+if (Test-Path $distPath) {
+    Remove-Item -Recurse -Force $distPath
+}
+
+if (Test-Path $portableZipPath) {
+    Remove-Item -Force $portableZipPath
+}
+
 & $PythonExe -m PyInstaller --noconfirm --clean $specPath
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
@@ -40,9 +48,6 @@ if (Test-Path $configExamplePath) {
     Copy-Item -Force $configExamplePath (Join-Path $distPath "seminar.config.example.json")
 }
 
-if (Test-Path $portableZipPath) {
-    Remove-Item -Force $portableZipPath
-}
 Compress-Archive -Path $distPath -DestinationPath $portableZipPath
 
 Write-Host ""
