@@ -13,6 +13,7 @@ from typing import Any
 from .api import LibraryApi
 from .commands import (
     _auth_failure_detail,
+    _clear_cached_auth,
     _describe_auth_failure,
     _ensure_authenticated,
     _extract_current_user_card,
@@ -20,7 +21,7 @@ from .commands import (
 )
 from .config import SeminarDefaults, SeminarTarget
 from .logger import JsonLogger, create_logger
-from .result import is_success_response
+from .result import is_success_response, is_token_expired_response
 from .runtime_paths import RuntimePaths, ensure_runtime_dirs, resolve_named_runtime_paths
 from .seminar_service import (
     LIBRARY_CLOSE_TIME,
@@ -56,7 +57,11 @@ EARLY_WINDOW_SECONDS = 60
 LATE_WINDOW_SECONDS = 60
 MAX_SINGLE_RESERVE_MINUTES = 4 * 60
 SECOND_RESERVE_GAP_MINUTES = 15
-MAX_TOTAL_RESERVATION_SPAN_MINUTES = MAX_SINGLE_RESERVE_MINUTES * 2 + SECOND_RESERVE_GAP_MINUTES
+MIN_FINAL_RESERVE_MINUTES = 60
+RESERVATION_SPLIT_ERROR = (
+    "Requested seminar time cannot be split into reservation windows with segments up to 4 hours, "
+    "15-minute gaps, and a final segment of at least 60 minutes."
+)
 
 
 @dataclass
@@ -169,6 +174,43 @@ def _minutes_to_time(value: int, field_name: str) -> str:
     return f"{hour:02d}:{minute:02d}"
 
 
+def _reservation_window_capacity(segment_count: int) -> int:
+    return segment_count * MAX_SINGLE_RESERVE_MINUTES + (segment_count - 1) * SECOND_RESERVE_GAP_MINUTES
+
+
+def _minimum_reserved_minutes(segment_count: int) -> int:
+    if segment_count <= 0:
+        return 0
+    return MIN_FINAL_RESERVE_MINUTES + max(0, segment_count - 1)
+
+
+def _build_segment_durations(total_reserved_minutes: int, segment_count: int) -> tuple[int, ...]:
+    if segment_count <= 0:
+        raise ValueError(RESERVATION_SPLIT_ERROR)
+    if total_reserved_minutes < _minimum_reserved_minutes(segment_count):
+        raise ValueError(RESERVATION_SPLIT_ERROR)
+    if total_reserved_minutes > segment_count * MAX_SINGLE_RESERVE_MINUTES:
+        raise ValueError(RESERVATION_SPLIT_ERROR)
+
+    durations: list[int] = []
+    remaining_minutes = total_reserved_minutes
+    for index in range(segment_count):
+        remaining_segments = segment_count - index
+        if remaining_segments == 1:
+            duration = remaining_minutes
+        else:
+            minimum_after_current = _minimum_reserved_minutes(remaining_segments - 1)
+            duration = min(MAX_SINGLE_RESERVE_MINUTES, remaining_minutes - minimum_after_current)
+        if duration <= 0 or duration > MAX_SINGLE_RESERVE_MINUTES:
+            raise ValueError(RESERVATION_SPLIT_ERROR)
+        durations.append(duration)
+        remaining_minutes -= duration
+
+    if remaining_minutes != 0 or durations[-1] < MIN_FINAL_RESERVE_MINUTES:
+        raise ValueError(RESERVATION_SPLIT_ERROR)
+    return tuple(durations)
+
+
 def _build_reservation_windows(start_time: str, end_time: str) -> tuple[ReservationWindow, ...]:
     start_minutes = _time_to_minutes(start_time, "Seminar start time")
     end_minutes = _time_to_minutes(end_time, "Seminar end time")
@@ -181,27 +223,28 @@ def _build_reservation_windows(start_time: str, end_time: str) -> tuple[Reservat
     if total_span <= MAX_SINGLE_RESERVE_MINUTES:
         return (ReservationWindow(start_time=start_time, end_time=end_time),)
 
-    if total_span > MAX_TOTAL_RESERVATION_SPAN_MINUTES:
-        raise ValueError("Total seminar time span cannot exceed 8 hours 15 minutes.")
+    segment_count = 2
+    while total_span > _reservation_window_capacity(segment_count):
+        segment_count += 1
 
-    first_end_minutes = start_minutes + MAX_SINGLE_RESERVE_MINUTES
-    second_start_minutes = first_end_minutes + SECOND_RESERVE_GAP_MINUTES
-    if end_minutes <= second_start_minutes:
-        raise ValueError(
-            "When the requested time exceeds 4 hours, the end time must be later than "
-            "the first reservation end time plus 15 minutes."
+    total_reserved_minutes = total_span - (segment_count - 1) * SECOND_RESERVE_GAP_MINUTES
+    durations = _build_segment_durations(total_reserved_minutes, segment_count)
+
+    windows: list[ReservationWindow] = []
+    cursor = start_minutes
+    for index, duration in enumerate(durations):
+        segment_end = cursor + duration
+        windows.append(
+            ReservationWindow(
+                start_time=_minutes_to_time(cursor, f"Reservation segment {index + 1} start time"),
+                end_time=_minutes_to_time(segment_end, f"Reservation segment {index + 1} end time"),
+            )
         )
+        cursor = segment_end + SECOND_RESERVE_GAP_MINUTES
 
-    return (
-        ReservationWindow(
-            start_time=start_time,
-            end_time=_minutes_to_time(first_end_minutes, "First reservation end time"),
-        ),
-        ReservationWindow(
-            start_time=_minutes_to_time(second_start_minutes, "Second reservation start time"),
-            end_time=end_time,
-        ),
-    )
+    if _time_to_minutes(windows[-1].end_time, "Reservation final segment end time") != end_minutes:
+        raise ValueError(RESERVATION_SPLIT_ERROR)
+    return tuple(windows)
 
 
 def _format_reservation_windows(windows: tuple[ReservationWindow, ...]) -> str:
@@ -680,13 +723,47 @@ def _attempt_reservation_for_room(
             teamusers=participants.teamusers,
         )
         submit_response = ctx.api.confirm_seminar_reservation(payload)
+        retried_after_auth_refresh = False
+        if not is_success_response(submit_response) and is_token_expired_response(submit_response):
+            retried_after_auth_refresh = True
+            ctx.logger.warn(
+                "Standalone seminar segment submit hit expired token; retrying current segment after re-authentication",
+                {
+                    "roomId": room["roomId"],
+                    "segmentIndex": index + 1,
+                    "startTime": window.start_time,
+                    "endTime": window.end_time,
+                },
+            )
+            _clear_cached_auth(ctx)
+            auth_result = _ensure_authenticated(ctx)
+            if not auth_result["ok"]:
+                return False, _build_skip_record(
+                    room=room,
+                    request=request,
+                    reason="submit_failed",
+                    detail=(
+                        "Seminar reservation submission failed after token expiry because automatic "
+                        f"re-login did not succeed: {_describe_auth_failure(auth_result)}"
+                    ),
+                    response=submit_response,
+                    summary={"reAuth": _auth_failure_detail(auth_result)},
+                    start_time=window.start_time,
+                    end_time=window.end_time,
+                    submitted_reservations=submitted_reservations,
+                )
+            submit_response = ctx.api.confirm_seminar_reservation(payload)
         if not is_success_response(submit_response):
+            detail = submit_response.get("msg", "Seminar reservation submission failed.")
+            if retried_after_auth_refresh:
+                detail = f"Seminar reservation submission still failed after automatic re-login retry: {detail}"
             return False, _build_skip_record(
                 room=room,
                 request=request,
                 reason="submit_failed",
-                detail=submit_response.get("msg", "Seminar reservation submission failed."),
+                detail=detail,
                 response=submit_response,
+                summary={"retriedAfterTokenExpired": retried_after_auth_refresh} if retried_after_auth_refresh else None,
                 start_time=window.start_time,
                 end_time=window.end_time,
                 submitted_reservations=submitted_reservations,

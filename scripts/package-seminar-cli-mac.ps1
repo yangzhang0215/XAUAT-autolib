@@ -168,6 +168,8 @@ New-Item -ItemType Directory -Path $pythonPackageRoot -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $sourcePythonRoot "seminar_cli.py") -Destination (Join-Path $pythonPackageRoot "seminar_cli.py")
 Copy-Item -LiteralPath (Join-Path $sourcePythonRoot "seminar.config.example.json") -Destination (Join-Path $pythonPackageRoot "seminar.config.example.json")
 Copy-Item -LiteralPath (Join-Path $sourcePythonRoot "libspace_cli") -Destination (Join-Path $pythonPackageRoot "libspace_cli") -Recurse
+Get-ChildItem -LiteralPath $packageRoot -Recurse -Directory -Force | Where-Object { $_.Name -eq "__pycache__" } | Remove-Item -Recurse -Force
+Get-ChildItem -LiteralPath $packageRoot -Recurse -File -Force | Where-Object { $_.Extension -in ".pyc", ".pyo" } | Remove-Item -Force
 
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText($readmePath, $readmeText, $utf8NoBom)

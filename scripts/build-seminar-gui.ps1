@@ -7,6 +7,7 @@ $ErrorActionPreference = "Stop"
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $venvPython = Join-Path $projectRoot "python\.venv\Scripts\python.exe"
 $specPath = Join-Path $PSScriptRoot "seminar-gui.spec"
+$buildPath = Join-Path $projectRoot "build"
 $distPath = Join-Path $projectRoot "dist\xauat-seminar-gui"
 $iconPath = Join-Path $projectRoot "assets\xauat-emblem.ico"
 $configExamplePath = Join-Path $projectRoot "python\seminar.config.example.json"
@@ -33,6 +34,10 @@ Write-Host "Building standalone seminar GUI..."
 
 if (Test-Path $distPath) {
     Remove-Item -Recurse -Force $distPath
+}
+
+if (Test-Path $buildPath) {
+    Remove-Item -Recurse -Force $buildPath
 }
 
 if (Test-Path $portableZipPath) {

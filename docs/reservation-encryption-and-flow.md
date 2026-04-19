@@ -257,14 +257,15 @@ return base64.b64encode(cipher.encrypt(_pad(plain_text))).decode("ascii")
 规则在 [python/libspace_cli/seminar_standalone.py](../python/libspace_cli/seminar_standalone.py)：
 
 - 单次最长 `4 小时`
-- 超过 `4 小时` 就拆成两段
-- 两段之间固定空档 `15 分钟`
-- 总跨度不能超过 `8 小时 15 分钟`
+- 超过 `4 小时` 就按规则拆成多段
+- 相邻两段之间固定空档 `15 分钟`
+- 每段时长都不超过 `4 小时`
+- 最后一段至少保留 `60 分钟`
 
 例如：
 
 ```text
-08:00 -> 16:15
+08:00 -> 20:00
 ```
 
 会拆成：
@@ -272,13 +273,14 @@ return base64.b64encode(cipher.encrypt(_pad(plain_text))).decode("ascii")
 ```text
 08:00-12:00
 12:15-16:15
+16:30-20:00
 ```
 
 而且按当前实现：
 
-- 第二段预约请求不会立刻发
-- 会在第一段成功后真实等待 `15 分钟`
-- 然后再发第二段确认请求
+- `15 分钟` 只体现在预约时间窗之间的空档
+- API 提交会按拆分后的时间窗顺序连续发送
+- 不会在两段之间真实等待 `15 分钟`
 
 ### 4. 调度控制
 
@@ -432,13 +434,13 @@ return base64.b64encode(cipher.encrypt(_pad(plain_text))).decode("ascii")
 2. 提交
 3. 成功结束
 
-如果是两段预约：
+如果是多段预约：
 
-1. 提交第一段
-2. 记录第一段成功结果
-3. 真实等待 15 分钟
-4. 再提交第二段
-5. 如果第二段失败，状态会记成“部分成功”
+1. 按拆分后的时间窗顺序逐段提交
+2. 每成功一段就记录这一段的结果
+3. 如果某一段返回 `code=10001`，会清空缓存认证并自动重登
+4. 重登成功后只重试当前失败段一次
+5. 如果重试后仍失败，状态会记成“部分成功”
 
 ### 14. 结果落盘与日志
 
@@ -490,7 +492,7 @@ sequenceDiagram
 
     User->>Tool: reserve / reserve --wait
     Tool->>Tool: 解析配置与时间窗
-    Tool->>Tool: 超过4小时则拆成两段
+    Tool->>Tool: 超过4小时则按规则拆成多段
     Tool->>Lib: /api/Member/my
     alt token失效或不存在
         Tool->>Lib: /api/index/config
@@ -511,11 +513,13 @@ sequenceDiagram
     Tool->>Tool: 本地校验人数/时段/blockedRanges
     Tool->>Tool: 生成确认payload
     Tool->>Tool: AES-CBC加密为 aesjson
-    Tool->>Lib: /reserve/index/confirm
-    alt 需要第二段
-        Tool->>Tool: 等待15分钟
-        Tool->>Tool: 再次加密第二段payload
+    loop 每个预约时间窗
         Tool->>Lib: /reserve/index/confirm
+        alt code=10001
+            Tool->>Tool: 清空缓存认证并自动重登
+            Tool->>Lib: /reserve/index/confirm
+        end
+        Tool->>Tool: 如有下一段则继续处理
     end
     Lib-->>Tool: code=1/失败信息
     Tool->>Tool: 写 state.json 与 jsonl 日志
@@ -527,7 +531,7 @@ sequenceDiagram
 - 预约确认加密和统一认证密码加密是两套不同规则
 - `/api/index/config` 的 `data` 也可能需要先解密
 - `availableDays` 为空不会再被直接判定为“当天不可约”
-- 超过 4 小时时，不只是时间窗分成两段，第二次提交现在也会真实等待 15 分钟
+- 超过 4 小时时，程序会把预约时间窗拆成多段，但 API 提交仍会顺序连续发送，不会真实等待 15 分钟
 
 ## 八、如果你要自己复现抓包里的加密
 
@@ -559,4 +563,3 @@ body = {
 - key = `pwdEncryptSalt`
 - iv = 随机 16 字符
 - 明文 = `64位随机串 + password`
-

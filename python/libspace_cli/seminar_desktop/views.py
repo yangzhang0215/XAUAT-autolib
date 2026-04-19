@@ -492,7 +492,7 @@ class DashboardPage(AuroraPage):
 
         if form.title and form.start_time and form.end_time:
             self.topic_card.lead_label.setText(f"{form.title}  |  {form.start_time}-{form.end_time}")  # type: ignore[attr-defined]
-            self.topic_card.detail_label.setText("超过 4 小时会自动拆成两段请求，且总时长不超过 8 小时。")  # type: ignore[attr-defined]
+            self.topic_card.detail_label.setText("超过 4 小时会自动拆成多段请求，每段不超过 4 小时，段间固定 15 分钟。")  # type: ignore[attr-defined]
         else:
             self.topic_card.lead_label.setText("尚未填写主题和时间")  # type: ignore[attr-defined]
             self.topic_card.detail_label.setText("只支持预约当天，且结束时间不能晚于 22:30。")  # type: ignore[attr-defined]

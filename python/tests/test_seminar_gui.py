@@ -138,6 +138,26 @@ class SeminarGuiTests(unittest.TestCase):
 
         self.assertTrue(any("22:30" in item for item in errors))
 
+    def test_validate_seminar_gui_form_accepts_long_multi_segment_span(self) -> None:
+        errors = validate_seminar_gui_form(
+            SeminarGuiFormData(
+                username="2504811004",
+                password="secret",
+                trigger_time="08:00:00",
+                start_time="08:00",
+                end_time="20:00",
+                participants_text="2501\n2502",
+                priority_room_ids_text="69\n70",
+                title="课程讨论",
+                content="结构设计研讨",
+                mobile="13800000000",
+                open_value="1",
+            ),
+            action="reserve_wait",
+        )
+
+        self.assertEqual(errors, [])
+
     def test_load_discover_snapshot_reads_json_and_txt_paths(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             runtime_dir = Path(temp_dir)
